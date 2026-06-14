@@ -27,6 +27,9 @@ torchrun \
   --threshold_max 0.99 \
   --threshold_steps 99 \
   --threshold_min_positives 10 \
+  --threshold_min_prevalence_multiplier 0.25 \
+  --threshold_max_prevalence_multiplier 3.0 \
+  --threshold_max_below_global 0.15 \
   --use_pos_weight \
   --pos_weight_max 20 \
   --dist_eval \

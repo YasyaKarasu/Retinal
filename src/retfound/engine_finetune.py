@@ -142,7 +142,7 @@ def _select_tied_threshold(grid, scores, reference):
 
 
 def calibrate_thresholds(targets, probabilities, class_names, args):
-    """Calibrate global or per-class thresholds using validation labels."""
+    """Calibrate thresholds while limiting implausible positive-rate inflation."""
     grid = np.linspace(
         args.threshold_min,
         args.threshold_max,
@@ -157,6 +157,8 @@ def calibrate_thresholds(targets, probabilities, class_names, args):
     )
     thresholds = np.full(len(class_names), global_threshold, dtype=np.float64)
     calibrated = np.zeros(len(class_names), dtype=bool)
+    validation_predictions = np.zeros(len(class_names), dtype=np.int64)
+    constrained_candidates = np.zeros(len(class_names), dtype=np.int64)
 
     if args.threshold_strategy == "per_class":
         for index in range(len(class_names)):
@@ -168,18 +170,67 @@ def calibrate_thresholds(targets, probabilities, class_names, args):
             ):
                 continue
 
-            scores = [
-                f1_score(
-                    targets[:, index],
-                    probabilities[:, index] >= threshold,
-                    zero_division=0,
+            target = targets[:, index]
+            minimum_predictions = max(
+                1,
+                int(
+                    np.floor(
+                        positives
+                        * args.threshold_min_prevalence_multiplier
+                    )
+                ),
+            )
+            maximum_predictions = min(
+                len(target),
+                max(
+                    positives,
+                    int(
+                        np.ceil(
+                            positives
+                            * args.threshold_max_prevalence_multiplier
+                        )
+                    ),
+                ),
+            )
+
+            candidate_thresholds = []
+            candidate_scores = []
+            for threshold in grid:
+                if (
+                    threshold
+                    < global_threshold
+                    - args.threshold_max_below_global
+                ):
+                    continue
+                prediction = probabilities[:, index] >= threshold
+                predicted_positives = int(prediction.sum())
+                if not (
+                    minimum_predictions
+                    <= predicted_positives
+                    <= maximum_predictions
+                ):
+                    continue
+                candidate_thresholds.append(threshold)
+                candidate_scores.append(
+                    f1_score(target, prediction, zero_division=0)
                 )
-                for threshold in grid
-            ]
+
+            constrained_candidates[index] = len(candidate_thresholds)
+            if not candidate_thresholds:
+                continue
+
+            candidate_thresholds = np.asarray(candidate_thresholds)
             thresholds[index] = _select_tied_threshold(
-                grid, scores, global_threshold
+                candidate_thresholds,
+                candidate_scores,
+                global_threshold,
             )
             calibrated[index] = True
+
+    for index, threshold in enumerate(thresholds):
+        validation_predictions[index] = int(
+            (probabilities[:, index] >= threshold).sum()
+        )
 
     details = {
         "strategy": args.threshold_strategy,
@@ -188,11 +239,24 @@ def calibrate_thresholds(targets, probabilities, class_names, args):
         "threshold_max": args.threshold_max,
         "threshold_steps": args.threshold_steps,
         "threshold_min_positives": args.threshold_min_positives,
+        "threshold_min_prevalence_multiplier": (
+            args.threshold_min_prevalence_multiplier
+        ),
+        "threshold_max_prevalence_multiplier": (
+            args.threshold_max_prevalence_multiplier
+        ),
+        "threshold_max_below_global": args.threshold_max_below_global,
         "classes": {
             class_name: {
                 "threshold": float(thresholds[index]),
                 "calibrated_per_class": bool(calibrated[index]),
                 "validation_positives": int(targets[:, index].sum()),
+                "validation_predicted_positives": int(
+                    validation_predictions[index]
+                ),
+                "constrained_candidates": int(
+                    constrained_candidates[index]
+                ),
             }
             for index, class_name in enumerate(class_names)
         },

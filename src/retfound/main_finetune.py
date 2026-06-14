@@ -133,6 +133,24 @@ def get_args_parser():
         help="Minimum validation positives and negatives for per-class calibration",
     )
     parser.add_argument(
+        "--threshold_min_prevalence_multiplier",
+        default=0.25,
+        type=float,
+        help="Minimum predicted positives relative to validation positives",
+    )
+    parser.add_argument(
+        "--threshold_max_prevalence_multiplier",
+        default=3.0,
+        type=float,
+        help="Maximum predicted positives relative to validation positives",
+    )
+    parser.add_argument(
+        "--threshold_max_below_global",
+        default=0.15,
+        type=float,
+        help="Maximum amount a per-class threshold may fall below the global threshold",
+    )
+    parser.add_argument(
         "--use_pos_weight",
         action=argparse.BooleanOptionalAction,
         default=True,
