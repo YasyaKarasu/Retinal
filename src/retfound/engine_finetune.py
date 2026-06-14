@@ -1,6 +1,7 @@
 import csv
 import json
 import os
+from contextlib import nullcontext
 from typing import Iterable, Optional
 
 import numpy as np
@@ -60,23 +61,33 @@ def train_one_epoch(
         if mixup_fn:
             samples, targets = mixup_fn(samples, targets)
 
-        with torch.amp.autocast(
-            device_type="cuda", enabled=device.type == "cuda"
-        ):
-            outputs = model(samples)
-            loss = criterion(outputs, targets)
-
-        loss_value = loss.item()
-        loss /= accum_iter
-        loss_scaler(
-            loss,
-            optimizer,
-            clip_grad=max_norm,
-            parameters=model.parameters(),
-            create_graph=False,
-            update_grad=(data_iter_step + 1) % accum_iter == 0,
+        update_grad = (
+            (data_iter_step + 1) % accum_iter == 0
+            or data_iter_step + 1 == len(data_loader)
         )
-        if (data_iter_step + 1) % accum_iter == 0:
+        sync_context = (
+            model.no_sync()
+            if hasattr(model, "no_sync") and not update_grad
+            else nullcontext()
+        )
+        with sync_context:
+            with torch.amp.autocast(
+                device_type="cuda", enabled=device.type == "cuda"
+            ):
+                outputs = model(samples)
+                loss = criterion(outputs, targets)
+
+            loss_value = loss.item()
+            loss /= accum_iter
+            loss_scaler(
+                loss,
+                optimizer,
+                clip_grad=max_norm,
+                parameters=model.parameters(),
+                create_graph=False,
+                update_grad=update_grad,
+            )
+        if update_grad:
             optimizer.zero_grad()
 
         if device.type == "cuda":
@@ -86,7 +97,7 @@ def train_one_epoch(
         metric_logger.update(lr=max_lr)
 
         loss_value_reduce = misc.all_reduce_mean(loss_value)
-        if log_writer is not None and (data_iter_step + 1) % accum_iter == 0:
+        if log_writer is not None and update_grad:
             epoch_1000x = int(
                 (data_iter_step / len(data_loader) + epoch) * 1000
             )

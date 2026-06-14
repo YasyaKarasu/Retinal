@@ -69,7 +69,7 @@ def Dinov2(args, **kwargs):
     model = timm.create_model(
         arch,
         pretrained=True,
-        img_size=224,
+        img_size=args.input_size,
         **kwargs
     )
     return model
@@ -77,10 +77,14 @@ def Dinov2(args, **kwargs):
 
 
 def RETFound_dinov2(args, **kwargs):
+    if args.input_size % 14 != 0:
+        raise ValueError(
+            "RETFound-DINOv2 input size must be divisible by patch size 14"
+        )
     model = timm.create_model(
         'vit_large_patch14_dinov2.lvd142m',
         pretrained=False,
-        img_size=224,
+        img_size=args.input_size,
         **kwargs
     )
     return model

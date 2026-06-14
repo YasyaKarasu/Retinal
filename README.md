@@ -74,6 +74,19 @@ For two NVIDIA L40 48GB GPUs, start full fine-tuning with:
 CUDA_VISIBLE_DEVICES=0,1 bash scripts/train_rfmid_2xl40.sh
 ```
 
+The script creates a one-time lossless 768-pixel RFMiD cache under
+`dataset/.cache/rfmid_768`. Original images are up to 4288x2848 and repeatedly
+decoding them delays the first batch while DataLoader prefetch queues refill.
+Subsequent runs reuse the cache. The first batch still has a small unavoidable
+queue warm-up, but disk decoding and augmentation work are reduced.
+
+Worker counts can be adjusted without editing the script:
+
+```bash
+NUM_WORKERS=8 PREFETCH_FACTOR=4 CACHE_WORKERS=12 \
+  bash scripts/train_rfmid_2xl40.sh
+```
+
 The L40 script avoids gradient accumulation:
 
 ```text
@@ -98,6 +111,13 @@ The evaluation script first calibrates thresholds on the validation split,
 then applies the frozen thresholds to the test split. Classes with fewer than
 10 positive or negative validation examples use the globally calibrated
 threshold instead of an unstable class-specific threshold.
+
+Class-specific candidates are restricted to predicted-positive counts between
+0.25x and 3x the observed validation positive count. This prevents pathological
+thresholds such as predicting most images positive for a disease with only a
+few percent prevalence. Per-class thresholds are also prevented from falling
+more than 0.15 below the global threshold, shrinking unstable estimates toward
+the more robust global calibration.
 
 Detailed outputs are written beside the checkpoint:
 
@@ -131,6 +151,46 @@ to:
 
 If full fine-tuning runs out of memory, set `--batch_size 8` and
 `--accum_iter 2`, preserving an effective batch size of 32.
+
+## 392x392 Resolution Experiment
+
+The DINOv2 patch size is 14, so use resolutions divisible by 14. Do not use
+384x384 with this model. The first higher-resolution comparison uses 392x392,
+which produces a 28x28 patch grid instead of the 16x16 grid at 224x224.
+
+Run the experiment independently from the 224 baseline:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 \
+  bash scripts/train_rfmid_2xl40_392.sh
+```
+
+The default configuration keeps the same global batch size:
+
+```text
+2 GPUs x batch size 8 x accumulation 2 = global batch size 32
+```
+
+DDP gradient synchronization is skipped for non-update microbatches, so
+gradient accumulation only communicates once per optimizer step. If 392x392
+runs out of memory:
+
+```bash
+BATCH_SIZE=4 ACCUM_ITER=4 \
+  bash scripts/train_rfmid_2xl40_392.sh
+```
+
+Evaluate the 392 checkpoint with validation-calibrated thresholds:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 \
+  bash scripts/eval_rfmid_2xl40_392.sh
+```
+
+Results are written under
+`output_dir/retfound_dinov2_meh_rfmid_392_2xl40/`, leaving the 224 baseline
+unchanged. Compare macro AP and AUROC first, then calibrated macro F1 and
+per-class performance for small lesions.
 
 ## Six L40 GPUs
 
