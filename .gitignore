@@ -1,0 +1,10 @@
+RETFound/
+dataset/
+hf_models/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+output_dir/
+output_logs/
