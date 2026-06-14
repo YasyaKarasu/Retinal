@@ -108,6 +108,12 @@ def get_args_parser():
         help="Dataset format",
     )
     parser.add_argument("--data_path", default="./dataset", type=str)
+    parser.add_argument(
+        "--image_cache_dir",
+        default="",
+        type=str,
+        help="Optional resized RFMiD cache directory",
+    )
     parser.add_argument("--nb_classes", default=45, type=int)
     parser.add_argument("--output_dir", default="./output_dir")
     parser.add_argument("--log_dir", default="./output_logs")

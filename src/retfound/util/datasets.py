@@ -29,7 +29,14 @@ RFMID_SPLITS = {
 class RFMiDDataset(Dataset):
     """RFMiD image dataset backed by the official CSV multi-label annotations."""
 
-    def __init__(self, root, split, transform=None, include_id=False):
+    def __init__(
+        self,
+        root,
+        split,
+        transform=None,
+        include_id=False,
+        image_cache_dir=None,
+    ):
         if split not in RFMID_SPLITS:
             raise ValueError(f"Unknown RFMiD split: {split}")
 
@@ -54,9 +61,27 @@ class RFMiDDataset(Dataset):
             records = list(reader)
 
         self.image_ids = [record["ID"] for record in records]
-        self.image_paths = [
+        original_image_paths = [
             self.image_dir / f"{image_id}.png" for image_id in self.image_ids
         ]
+        if image_cache_dir:
+            cache_directory = Path(image_cache_dir) / split
+            cached_image_paths = [
+                cache_directory / f"{image_id}.png"
+                for image_id in self.image_ids
+            ]
+            missing_cache = [
+                path for path in cached_image_paths if not path.is_file()
+            ]
+            if missing_cache:
+                raise FileNotFoundError(
+                    f"{len(missing_cache)} cached RFMiD images are missing; "
+                    "run `python -m retfound.prepare_cache` first"
+                )
+            self.image_paths = cached_image_paths
+        else:
+            self.image_paths = original_image_paths
+
         missing = [path for path in self.image_paths if not path.is_file()]
         if missing:
             raise FileNotFoundError(
@@ -110,6 +135,7 @@ def build_dataset(is_train, args):
             is_train,
             transform=transform,
             include_id=is_train != "train",
+            image_cache_dir=getattr(args, "image_cache_dir", ""),
         )
         if args.nb_classes != len(dataset.class_names):
             raise ValueError(

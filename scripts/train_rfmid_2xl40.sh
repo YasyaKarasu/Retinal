@@ -7,12 +7,19 @@ cd "${ROOT_DIR}"
 export PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
 
+python -m retfound.prepare_cache \
+  --data-path dataset \
+  --cache-dir dataset/.cache/rfmid_768 \
+  --short-side 768 \
+  --workers "${CACHE_WORKERS:-12}"
+
 torchrun \
   --standalone \
   --nproc_per_node=2 \
   -m retfound.main_finetune \
   --dataset rfmid \
   --data_path dataset \
+  --image_cache_dir dataset/.cache/rfmid_768 \
   --model RETFound_dinov2 \
   --model_arch retfound_dinov2 \
   --finetune hf_models/RETFound_dinov2_meh/RETFound_dinov2_meh.pth \
@@ -32,8 +39,8 @@ torchrun \
   --use_pos_weight \
   --pos_weight_max 20 \
   --dist_eval \
-  --num_workers 4 \
-  --prefetch_factor 2 \
+  --num_workers "${NUM_WORKERS:-8}" \
+  --prefetch_factor "${PREFETCH_FACTOR:-4}" \
   --persistent_workers \
   --fused_optimizer \
   --task retfound_dinov2_meh_rfmid_2xl40
