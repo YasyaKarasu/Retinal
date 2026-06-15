@@ -64,7 +64,12 @@ dataset/
 The task uses the 45 disease columns from `DR` through `CL`. `Disease_Risk` is
 not included in the output. Training uses `BCEWithLogitsLoss`; evaluation uses
 sigmoid probabilities and multi-label F1, AUROC, average precision, Hamming
-loss, and related metrics.
+loss, and related metrics. Evaluation also reports the RFMiD challenge
+28-class label space without replacing the 45-label results. It retains
+`DR`, `ARMD`, `MH`, `DN`, `MYA`, `BRVO`, `TSLN`, `ERM`, `LS`, `MS`, `CSR`,
+`ODC`, `CRVO`, `TV`, `AH`, `ODP`, `ODE`, `ST`, `AION`, `PT`, `RT`, `RS`,
+`CRS`, `EDN`, `RPEC`, `MHL`, and `RP`, and merges the remaining 18 rare
+conditions into `OTHER`.
 
 ## Fine-Tuning
 
@@ -130,6 +135,56 @@ predictions_test_per_class.csv
 metrics_val_per_class.csv
 metrics_test_per_class.csv
 ```
+
+The corresponding challenge files use a `_challenge28` suffix, for example:
+
+```text
+thresholds_challenge28.json
+per_class_test_per_class_challenge28.csv
+predictions_test_per_class_challenge28.csv
+metrics_test_per_class_challenge28.csv
+```
+
+The derived `OTHER` target is the logical OR of the 18 rare labels. Its
+probability is the maximum probability among those labels, and its threshold
+is calibrated independently on the validation split.
+
+## Dual-Head Training
+
+The existing scripts continue to train only the 45-disease head. To train a
+shared RETFound backbone with both the original 45-disease head and a native
+RFMiD challenge28 head, run:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 bash scripts/train_rfmid_2xl40_dual_head.sh
+```
+
+The total objective is:
+
+```text
+45-class BCE + CHALLENGE_LOSS_WEIGHT * challenge28 BCE
+```
+
+`CHALLENGE_LOSS_WEIGHT` defaults to `1.0`. Both losses use independently
+computed training-set positive weights. The dual-head script selects the best
+checkpoint using the mean of the 45-class and challenge28 validation scores
+and writes to a separate task directory:
+
+```text
+output_dir/retfound_dinov2_meh_rfmid_2xl40_dual_head/
+output_logs/retfound_dinov2_meh_rfmid_2xl40_dual_head/
+```
+
+Evaluate its native challenge head with:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 bash scripts/eval_rfmid_2xl40_dual_head.sh
+```
+
+The original evaluation scripts remain valid for single-head checkpoints and
+derive challenge28 probabilities from the 45-class outputs. The dual-head
+evaluation script requires a checkpoint that contains the trained
+`challenge_head`.
 
 An alternative checkpoint path can be passed as the first argument:
 

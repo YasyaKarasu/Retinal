@@ -26,9 +26,11 @@ from .util import lr_decay as lrd
 from .util import misc
 from .util.datasets import (
     DistributedEvalSampler,
+    RFMID_CHALLENGE_CLASS_NAMES,
     build_dataset,
     get_class_names,
     get_target_matrix,
+    project_rfmid_challenge_targets,
 )
 from .util.misc import NativeScalerWithGradNormCount as NativeScaler
 
@@ -168,6 +170,24 @@ def get_args_parser():
         type=float,
         help="Maximum BCE positive-class weight",
     )
+    parser.add_argument(
+        "--train_challenge_head",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Train a second RFMiD challenge28 classifier head",
+    )
+    parser.add_argument(
+        "--challenge_loss_weight",
+        default=1.0,
+        type=float,
+        help="Weight applied to the challenge28 BCE loss",
+    )
+    parser.add_argument(
+        "--model_selection",
+        default="all_classes",
+        choices=["all_classes", "challenge28", "mean"],
+        help="Validation score used to select the best checkpoint",
+    )
 
     # >>> NEW: training data efficiency <<<
     parser.add_argument(
@@ -230,12 +250,22 @@ def main(args):
         print(f"Load checkpoint (args) from: {args.resume}")
         args = checkpoint["args"]
         args.resume = resume_path
+        for name, default in (
+            ("train_challenge_head", False),
+            ("challenge_loss_weight", 1.0),
+            ("model_selection", "all_classes"),
+        ):
+            if not hasattr(args, name):
+                setattr(args, name, default)
 
     # ---- Distributed setup
     misc.init_distributed_mode(args)
 
     print(f"job dir: {os.path.dirname(os.path.realpath(__file__))}")
     print(f"{args}".replace(", ", ",\n"))
+
+    if args.challenge_loss_weight < 0:
+        raise ValueError("--challenge_loss_weight must be non-negative")
 
     device = torch.device(args.device)
 
@@ -259,6 +289,10 @@ def main(args):
             drop_path_rate=args.drop_path,
             args=args,
         )
+    if args.train_challenge_head:
+        model = models.add_challenge_head(
+            model, num_classes=len(RFMID_CHALLENGE_CLASS_NAMES)
+        )
 
     # ---- Load pre-trained weights (if requested and not eval-only)
     if args.finetune and not args.eval:
@@ -277,6 +311,8 @@ def main(args):
         # -- Re-init head
         if hasattr(model, "head") and hasattr(model.head, "weight"):
             trunc_normal_(model.head.weight, std=2e-5)
+        if hasattr(model, "challenge_head"):
+            trunc_normal_(model.challenge_head.weight, std=2e-5)
 
     # ---- Datasets & samplers
     dataset_train = build_dataset(is_train="train", args=args)
@@ -295,8 +331,9 @@ def main(args):
         )
 
     pos_weight = None
+    challenge_pos_weight = None
+    train_targets = get_target_matrix(dataset_train)
     if args.use_pos_weight:
-        train_targets = get_target_matrix(dataset_train)
         positives = train_targets.sum(dim=0)
         negatives = len(train_targets) - positives
         pos_weight = torch.where(
@@ -310,10 +347,35 @@ def main(args):
                 f"Using BCE pos_weight (max={args.pos_weight_max:g}); "
                 f"{zero_positive} labels have no positive training examples"
             )
+        if args.train_challenge_head:
+            challenge_targets = project_rfmid_challenge_targets(
+                train_targets, class_names
+            )
+            challenge_positives = challenge_targets.sum(dim=0)
+            challenge_negatives = len(challenge_targets) - challenge_positives
+            challenge_pos_weight = torch.where(
+                challenge_positives > 0,
+                challenge_negatives / challenge_positives.clamp_min(1),
+                torch.ones_like(challenge_positives),
+            ).clamp(max=args.pos_weight_max)
+            if misc.is_main_process():
+                print(
+                    "Using challenge28 BCE pos_weight "
+                    f"(max={args.pos_weight_max:g})"
+                )
 
     criterion = torch.nn.BCEWithLogitsLoss(
         pos_weight=pos_weight.to(device) if pos_weight is not None else None
     )
+    challenge_criterion = None
+    if args.train_challenge_head:
+        challenge_criterion = torch.nn.BCEWithLogitsLoss(
+            pos_weight=(
+                challenge_pos_weight.to(device)
+                if challenge_pos_weight is not None
+                else None
+            )
+        )
 
     num_tasks   = misc.get_world_size()
     global_rank = misc.get_rank()
@@ -389,7 +451,33 @@ def main(args):
             args.resume, map_location="cpu", weights_only=False
         )
         print(f"Load checkpoint for eval from: {args.resume}")
-        model.load_state_dict(checkpoint["model"])
+        load_result = model.load_state_dict(checkpoint["model"], strict=False)
+        missing_challenge_head = any(
+            key.startswith("challenge_head.")
+            for key in load_result.missing_keys
+        )
+        if args.train_challenge_head and missing_challenge_head:
+            raise ValueError(
+                "The checkpoint has no trained challenge28 head. "
+                "Evaluate it without --train_challenge_head to use the "
+                "derived 45-to-28 projection."
+            )
+        ignored_challenge_head = any(
+            key.startswith("challenge_head.")
+            for key in load_result.unexpected_keys
+        )
+        if not args.train_challenge_head and ignored_challenge_head:
+            print(
+                "Warning: checkpoint contains a native challenge28 head, "
+                "but --train_challenge_head is disabled; challenge metrics "
+                "will use the derived 45-to-28 projection."
+            )
+        if load_result.missing_keys or load_result.unexpected_keys:
+            print(
+                "Eval checkpoint load result: "
+                f"{len(load_result.missing_keys)} missing keys, "
+                f"{len(load_result.unexpected_keys)} unexpected keys"
+            )
 
     model.to(device)
     model_without_ddp = model
@@ -469,7 +557,13 @@ def main(args):
                 f"Calibrating {args.threshold_strategy} thresholds "
                 "on the validation split"
             )
-            _, _, calibrated_thresholds = engine_finetune.evaluate(
+            (
+                _,
+                _,
+                calibrated_thresholds,
+                calibrated_challenge_thresholds,
+                _,
+            ) = engine_finetune.evaluate(
                 data_loader_val,
                 model,
                 criterion,
@@ -482,8 +576,10 @@ def main(args):
                 calibrate=True,
                 export_details=True,
             )
+        else:
+            calibrated_challenge_thresholds = None
 
-        test_stats, auc_roc, _ = engine_finetune.evaluate(
+        test_stats, auc_roc, _, _, _ = engine_finetune.evaluate(
             data_loader_test,
             model,
             criterion,
@@ -494,6 +590,7 @@ def main(args):
             log_writer=log_writer,
             class_names=class_names,
             thresholds=calibrated_thresholds,
+            challenge_thresholds=calibrated_challenge_thresholds,
             export_details=True,
         )
         misc.cleanup_distributed()
@@ -515,10 +612,18 @@ def main(args):
             model, criterion, data_loader_train,
             optimizer, device, epoch, loss_scaler,
             args.clip_grad, mixup_fn,
-            log_writer=log_writer, args=args
+            log_writer=log_writer, args=args,
+            challenge_criterion=challenge_criterion,
+            class_names=class_names,
         )
 
-        val_stats, val_score, _ = engine_finetune.evaluate(
+        (
+            val_stats,
+            val_score,
+            _,
+            _,
+            challenge_val_stats,
+        ) = engine_finetune.evaluate(
             data_loader_val,
             model,
             criterion,
@@ -530,8 +635,16 @@ def main(args):
             class_names=class_names,
         )
 
-        if max_score < val_score:
-            max_score = val_score
+        challenge_val_score = challenge_val_stats["score"]
+        if args.model_selection == "challenge28":
+            selection_score = challenge_val_score
+        elif args.model_selection == "mean":
+            selection_score = (val_score + challenge_val_score) / 2
+        else:
+            selection_score = val_score
+
+        if max_score < selection_score:
+            max_score = selection_score
             best_epoch = epoch
             if args.output_dir and args.savemodel:
                 misc.save_model(
@@ -540,7 +653,11 @@ def main(args):
                 )
         if args.distributed:
             torch.distributed.barrier(device_ids=[args.gpu])
-        print(f"Best epoch = {best_epoch}, Best score = {max_score:.4f}")
+        print(
+            f"Selection score ({args.model_selection}) = "
+            f"{selection_score:.4f}; best epoch = {best_epoch}, "
+            f"best score = {max_score:.4f}"
+        )
 
         if log_writer is not None:
             log_writer.add_scalar("loss/val", val_stats["loss"], epoch)
@@ -566,7 +683,7 @@ def main(args):
     model_without_ddp.load_state_dict(checkpoint["model"], strict=False)
     model.to(device)
     print(f"Test with the best model, epoch = {checkpoint.get('epoch', -1)}:")
-    _test_stats, _auc_roc, _ = engine_finetune.evaluate(
+    _test_stats, _auc_roc, _, _, _ = engine_finetune.evaluate(
         data_loader_test,
         model,
         criterion,

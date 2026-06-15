@@ -1,5 +1,6 @@
 
 from functools import partial
+from types import MethodType
 
 import timm.models.vision_transformer
 import torch
@@ -87,6 +88,36 @@ def RETFound_dinov2(args, **kwargs):
         img_size=args.input_size,
         **kwargs
     )
+    return model
+
+
+def add_challenge_head(model, num_classes=28):
+    """Attach a second classifier while preserving the existing head keys."""
+    if not hasattr(model, "head") or not isinstance(model.head, nn.Linear):
+        raise TypeError(
+            "Dual-head training requires a model with a linear `head`"
+        )
+    if not hasattr(model, "forward_features") or not hasattr(
+        model, "forward_head"
+    ):
+        raise TypeError(
+            "Dual-head training requires `forward_features` and `forward_head`"
+        )
+
+    model.challenge_head = nn.Linear(model.head.in_features, num_classes)
+    trunc_normal_(model.challenge_head.weight, std=2e-5)
+    if model.challenge_head.bias is not None:
+        nn.init.zeros_(model.challenge_head.bias)
+
+    def forward_with_challenge_head(self, x):
+        features = self.forward_features(x)
+        pre_logits = self.forward_head(features, pre_logits=True)
+        return {
+            "all_classes": self.head(pre_logits),
+            "challenge28": self.challenge_head(pre_logits),
+        }
+
+    model.forward = MethodType(forward_with_challenge_head, model)
     return model
 
 

@@ -25,6 +25,79 @@ RFMID_SPLITS = {
     ),
 }
 
+# RFMiD challenge label space: 27 conditions with at least 10 examples
+# across the official splits, plus one merged class for all rarer conditions.
+RFMID_CHALLENGE_RETAINED_CLASSES = (
+    "DR",
+    "ARMD",
+    "MH",
+    "DN",
+    "MYA",
+    "BRVO",
+    "TSLN",
+    "ERM",
+    "LS",
+    "MS",
+    "CSR",
+    "ODC",
+    "CRVO",
+    "TV",
+    "AH",
+    "ODP",
+    "ODE",
+    "ST",
+    "AION",
+    "PT",
+    "RT",
+    "RS",
+    "CRS",
+    "EDN",
+    "RPEC",
+    "MHL",
+    "RP",
+)
+RFMID_CHALLENGE_CLASS_NAMES = (
+    *RFMID_CHALLENGE_RETAINED_CLASSES,
+    "OTHER",
+)
+
+
+def get_rfmid_challenge_indices(class_names):
+    """Return retained and rare column indices for the challenge schema."""
+    class_indices = {name: index for index, name in enumerate(class_names)}
+    missing = [
+        name
+        for name in RFMID_CHALLENGE_RETAINED_CLASSES
+        if name not in class_indices
+    ]
+    if missing:
+        raise ValueError(
+            "RFMiD challenge classes are missing: " + ", ".join(missing)
+        )
+
+    retained_indices = [
+        class_indices[name] for name in RFMID_CHALLENGE_RETAINED_CLASSES
+    ]
+    retained_set = set(RFMID_CHALLENGE_RETAINED_CLASSES)
+    rare_indices = [
+        index
+        for index, name in enumerate(class_names)
+        if name not in retained_set
+    ]
+    if not rare_indices:
+        raise ValueError(
+            "RFMiD challenge conversion requires rare classes for OTHER"
+        )
+    return retained_indices, rare_indices
+
+
+def project_rfmid_challenge_targets(targets, class_names):
+    """Convert 45 disease targets to 27 retained targets plus OTHER."""
+    retained_indices, rare_indices = get_rfmid_challenge_indices(class_names)
+    retained_targets = targets[..., retained_indices]
+    other_target = targets[..., rare_indices].amax(dim=-1, keepdim=True)
+    return torch.cat([retained_targets, other_target], dim=-1)
+
 
 class RFMiDDataset(Dataset):
     """RFMiD image dataset backed by the official CSV multi-label annotations."""
