@@ -10,6 +10,7 @@ export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
 LR="${LR:-5e-6}"
 MIN_LR="${MIN_LR:-5e-8}"
 EPOCHS="${EPOCHS:-50}"
+TEST_EVAL_INTERVAL="${TEST_EVAL_INTERVAL:-10}"
 WARMUP_EPOCHS="${WARMUP_EPOCHS:-5}"
 CHALLENGE_LOSS_WEIGHT="${CHALLENGE_LOSS_WEIGHT:-1.0}"
 TASK="${TASK:-retfound_dinov2_meh_rfmid_2xl40_dual_head}"
@@ -39,6 +40,7 @@ torchrun \
   --batch_size 16 \
   --accum_iter 1 \
   --epochs "${EPOCHS}" \
+  --test_eval_interval "${TEST_EVAL_INTERVAL}" \
   --lr "${LR}" \
   --min_lr "${MIN_LR}" \
   --warmup_epochs "${WARMUP_EPOCHS}" \

@@ -7,6 +7,7 @@ cd "${ROOT_DIR}"
 export PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}"
 
 EPOCHS="${EPOCHS:-50}"
+TEST_EVAL_INTERVAL="${TEST_EVAL_INTERVAL:-10}"
 
 torchrun \
   --standalone \
@@ -23,6 +24,7 @@ torchrun \
   --batch_size 2 \
   --accum_iter 8 \
   --epochs "${EPOCHS}" \
+  --test_eval_interval "${TEST_EVAL_INTERVAL}" \
   --lr 1e-5 \
   --min_lr 1e-7 \
   --warmup_epochs 5 \

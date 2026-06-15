@@ -574,6 +574,8 @@ def evaluate(
     challenge_thresholds=None,
     calibrate=False,
     export_details=False,
+    write_metrics=True,
+    quiet=False,
 ):
     """Evaluate sigmoid multi-label predictions."""
     metric_logger = misc.MetricLogger(delimiter="  ")
@@ -581,9 +583,12 @@ def evaluate(
     image_ids_all, targets_all, probabilities_all = [], [], []
     challenge_probabilities_all = []
 
-    for batch in metric_logger.log_every(
-        data_loader, 10, f"{mode}:"
-    ):
+    batches = (
+        data_loader
+        if quiet
+        else metric_logger.log_every(data_loader, 10, f"{mode}:")
+    )
+    for batch in batches:
         if len(batch) == 3:
             images, targets, image_ids = batch
             image_ids_all.extend(list(image_ids))
@@ -700,32 +705,34 @@ def evaluate(
     )
 
     if misc.is_main_process():
-        _print_metrics(
-            mode, "", metrics, targets, probabilities, thresholds
-        )
-        _print_metrics(
-            mode,
-            "challenge28",
-            challenge_metrics,
-            challenge_targets,
-            challenge_probabilities,
-            challenge_thresholds,
-        )
-
         output_dir = os.path.join(args.output_dir, args.task)
         os.makedirs(output_dir, exist_ok=True)
         strategy = (
             args.threshold_strategy if calibrate or thresholds is not None
             else "fixed"
         )
-        _write_metrics(output_dir, mode, strategy, metrics)
-        _write_metrics(
-            output_dir,
-            mode,
-            strategy,
-            challenge_metrics,
-            label_space="challenge28",
-        )
+        if not quiet:
+            _print_metrics(
+                mode, "", metrics, targets, probabilities, thresholds
+            )
+            _print_metrics(
+                mode,
+                "challenge28",
+                challenge_metrics,
+                challenge_targets,
+                challenge_probabilities,
+                challenge_thresholds,
+            )
+
+        if write_metrics:
+            _write_metrics(output_dir, mode, strategy, metrics)
+            _write_metrics(
+                output_dir,
+                mode,
+                strategy,
+                challenge_metrics,
+                label_space="challenge28",
+            )
 
         if log_writer:
             for metric_name, value in metrics.items():

@@ -2,6 +2,7 @@
 
 # =========================
 import argparse
+import copy
 import datetime
 import json
 import os
@@ -37,6 +38,84 @@ from .util.misc import NativeScalerWithGradNormCount as NativeScaler
 # =========================
 faulthandler.enable()
 warnings.simplefilter(action="ignore", category=FutureWarning)
+
+
+CURVE_COLUMNS = (
+    "epoch",
+    "train_loss",
+    "lr",
+    "val_loss",
+    "val_f1",
+    "val_micro_f1",
+    "val_auc",
+    "val_ap",
+    "val28_f1",
+    "val28_micro_f1",
+    "val28_auc",
+    "val28_ap",
+    "test_loss",
+    "test_f1",
+    "test_micro_f1",
+    "test_auc",
+    "test_ap",
+    "test28_f1",
+    "test28_micro_f1",
+    "test28_auc",
+    "test28_ap",
+)
+
+
+def append_epoch_curve(output_dir, epoch, train_stats, val_stats,
+                       val28_stats, test_stats, test28_stats,
+                       threshold_strategy):
+    """Append one compact monitoring row for epoch-curve experiments."""
+    path = Path(output_dir) / "epoch_curve.tsv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    new_file = not path.exists() or path.stat().st_size == 0
+    row = {
+        "epoch": epoch,
+        "train_loss": train_stats["loss"],
+        "lr": train_stats["lr"],
+        "val_loss": val_stats["loss"],
+        "val_f1": val_stats["f1_macro"],
+        "val_micro_f1": val_stats["f1_micro"],
+        "val_auc": val_stats["roc_auc_macro"],
+        "val_ap": val_stats["average_precision_macro"],
+        "val28_f1": val28_stats["f1_macro"],
+        "val28_micro_f1": val28_stats["f1_micro"],
+        "val28_auc": val28_stats["roc_auc_macro"],
+        "val28_ap": val28_stats["average_precision_macro"],
+        "test_loss": test_stats["loss"],
+        "test_f1": test_stats["f1_macro"],
+        "test_micro_f1": test_stats["f1_micro"],
+        "test_auc": test_stats["roc_auc_macro"],
+        "test_ap": test_stats["average_precision_macro"],
+        "test28_f1": test28_stats["f1_macro"],
+        "test28_micro_f1": test28_stats["f1_micro"],
+        "test28_auc": test28_stats["roc_auc_macro"],
+        "test28_ap": test28_stats["average_precision_macro"],
+    }
+    with path.open("a", encoding="utf-8") as handle:
+        if new_file:
+            handle.write(
+                "# test metrics are monitoring only; model selection uses "
+                "validation metrics\n"
+            )
+            handle.write(
+                "# thresholds are calibrated on validation and applied "
+                "unchanged to test\n"
+            )
+            handle.write(
+                f"# threshold_strategy={threshold_strategy}\n"
+            )
+            handle.write("\t".join(CURVE_COLUMNS) + "\n")
+        values = [
+            str(row[column])
+            if column == "epoch"
+            else f"{row[column]:.6f}"
+            for column in CURVE_COLUMNS
+        ]
+        handle.write("\t".join(values) + "\n")
 
 
 def get_args_parser():
@@ -188,6 +267,18 @@ def get_args_parser():
         choices=["all_classes", "challenge28", "mean"],
         help="Validation score used to select the best checkpoint",
     )
+    parser.add_argument(
+        "--test_eval_interval",
+        default=10,
+        type=int,
+        help="Evaluate the current model on test every N epochs; 0 disables",
+    )
+    parser.add_argument(
+        "--test_eval_threshold_strategy",
+        default="per_class",
+        choices=["global", "per_class"],
+        help="Validation threshold calibration used for periodic test curves",
+    )
 
     # >>> NEW: training data efficiency <<<
     parser.add_argument(
@@ -254,6 +345,8 @@ def main(args):
             ("train_challenge_head", False),
             ("challenge_loss_weight", 1.0),
             ("model_selection", "all_classes"),
+            ("test_eval_interval", 10),
+            ("test_eval_threshold_strategy", "per_class"),
         ):
             if not hasattr(args, name):
                 setattr(args, name, default)
@@ -266,6 +359,8 @@ def main(args):
 
     if args.challenge_loss_weight < 0:
         raise ValueError("--challenge_loss_weight must be non-negative")
+    if args.test_eval_interval < 0:
+        raise ValueError("--test_eval_interval must be non-negative")
 
     device = torch.device(args.device)
 
@@ -670,6 +765,76 @@ def main(args):
         if args.output_dir and misc.is_main_process():
             with open(os.path.join(args.output_dir, args.task, "log.txt"), "a", encoding="utf-8") as f:
                 f.write(json.dumps(log_stats) + "\n")
+
+        completed_epoch = epoch + 1
+        run_periodic_test = (
+            args.test_eval_interval > 0
+            and completed_epoch % args.test_eval_interval == 0
+        )
+        if run_periodic_test:
+            curve_args = copy.copy(args)
+            curve_args.threshold_strategy = (
+                args.test_eval_threshold_strategy
+            )
+            (
+                curve_val_stats,
+                _,
+                curve_thresholds,
+                curve_challenge_thresholds,
+                curve_val28_stats,
+            ) = engine_finetune.evaluate(
+                data_loader_val,
+                model,
+                criterion,
+                device,
+                curve_args,
+                epoch,
+                mode="val_curve",
+                log_writer=None,
+                class_names=class_names,
+                calibrate=True,
+                write_metrics=False,
+                quiet=True,
+            )
+            (
+                curve_test_stats,
+                _,
+                _,
+                _,
+                curve_test28_stats,
+            ) = engine_finetune.evaluate(
+                data_loader_test,
+                model,
+                criterion,
+                device,
+                curve_args,
+                epoch,
+                mode="test_curve",
+                log_writer=None,
+                class_names=class_names,
+                thresholds=curve_thresholds,
+                challenge_thresholds=curve_challenge_thresholds,
+                write_metrics=False,
+                quiet=True,
+            )
+            if misc.is_main_process():
+                append_epoch_curve(
+                    os.path.join(args.output_dir, args.task),
+                    completed_epoch,
+                    train_stats,
+                    curve_val_stats,
+                    curve_val28_stats,
+                    curve_test_stats,
+                    curve_test28_stats,
+                    curve_args.threshold_strategy,
+                )
+                print(
+                    f"Epoch {completed_epoch} monitoring: "
+                    f"test F1={curve_test_stats['f1_macro']:.4f}, "
+                    f"AUC={curve_test_stats['roc_auc_macro']:.4f}; "
+                    f"test28 F1={curve_test28_stats['f1_macro']:.4f}, "
+                    f"AUC={curve_test28_stats['roc_auc_macro']:.4f}"
+                )
 
     # =========================
     # Final Test (Best Ckpt)

@@ -8,6 +8,7 @@ export PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
 
 EPOCHS="${EPOCHS:-50}"
+TEST_EVAL_INTERVAL="${TEST_EVAL_INTERVAL:-10}"
 
 python -m retfound.prepare_cache \
   --data-path dataset \
@@ -31,6 +32,7 @@ torchrun \
   --batch_size "${BATCH_SIZE:-8}" \
   --accum_iter "${ACCUM_ITER:-2}" \
   --epochs "${EPOCHS}" \
+  --test_eval_interval "${TEST_EVAL_INTERVAL}" \
   --lr 1e-5 \
   --min_lr 1e-7 \
   --warmup_epochs 5 \

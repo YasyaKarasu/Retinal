@@ -87,6 +87,31 @@ EPOCHS=70 CUDA_VISIBLE_DEVICES=0,1 \
   bash scripts/train_rfmid_2xl40_dual_head.sh
 ```
 
+During training, the current model is evaluated on the test split every 10
+completed epochs. Before each test evaluation, thresholds are calibrated on
+the validation split and then frozen for test. Test metrics are monitoring
+outputs only: checkpoint selection and optimization continue to use validation
+metrics exclusively.
+
+The compact curve log is written to:
+
+```text
+output_dir/<task>/epoch_curve.tsv
+```
+
+It contains one tab-separated row per monitoring epoch with train loss,
+learning rate, and validation/test F1, micro F1, AUROC, and AP for both the
+45-class and challenge28 outputs. Comment lines at the top document the
+no-test-selection rule and threshold protocol. Load it with `comment="#"`
+when plotting.
+
+Change or disable the interval without editing a script:
+
+```bash
+TEST_EVAL_INTERVAL=5 bash scripts/train_rfmid_2xl40_dual_head.sh
+TEST_EVAL_INTERVAL=0 bash scripts/train_rfmid_2xl40_dual_head.sh
+```
+
 The script creates a one-time lossless 768-pixel RFMiD cache under
 `dataset/.cache/rfmid_768`. Original images are up to 4288x2848 and repeatedly
 decoding them delays the first batch while DataLoader prefetch queues refill.
