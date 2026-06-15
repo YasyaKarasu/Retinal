@@ -162,6 +162,11 @@ for seed in "${SEED_VALUES[@]}"; do
     --resume "${task_dir}/checkpoint-best.pth" \
     2>&1 | tee "${task_dir}/eval_console.log"
 
+  echo "Removing evaluated checkpoints: task=${task}, seed=${seed}"
+  rm -f -- \
+    "${task_dir}/checkpoint-best.pth" \
+    "${task_dir}/checkpoint-latest.pth"
+
   printf '%s\t%s\tcomplete\n' "${seed}" "${task}" \
     >> "${SUMMARY_DIR}/run_manifest.tsv"
 done
