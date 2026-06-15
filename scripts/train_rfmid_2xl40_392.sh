@@ -7,6 +7,8 @@ cd "${ROOT_DIR}"
 export PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
 
+EPOCHS="${EPOCHS:-50}"
+
 python -m retfound.prepare_cache \
   --data-path dataset \
   --cache-dir dataset/.cache/rfmid_768 \
@@ -28,7 +30,7 @@ torchrun \
   --input_size 392 \
   --batch_size "${BATCH_SIZE:-8}" \
   --accum_iter "${ACCUM_ITER:-2}" \
-  --epochs 50 \
+  --epochs "${EPOCHS}" \
   --lr 1e-5 \
   --min_lr 1e-7 \
   --warmup_epochs 5 \

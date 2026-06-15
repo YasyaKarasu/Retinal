@@ -79,6 +79,14 @@ For two NVIDIA L40 48GB GPUs, start full fine-tuning with:
 CUDA_VISIBLE_DEVICES=0,1 bash scripts/train_rfmid_2xl40.sh
 ```
 
+All training scripts default to 50 epochs and accept an `EPOCHS` environment
+override:
+
+```bash
+EPOCHS=70 CUDA_VISIBLE_DEVICES=0,1 \
+  bash scripts/train_rfmid_2xl40_dual_head.sh
+```
+
 The script creates a one-time lossless 768-pixel RFMiD cache under
 `dataset/.cache/rfmid_768`. Original images are up to 4288x2848 and repeatedly
 decoding them delays the first batch while DataLoader prefetch queues refill.

@@ -7,6 +7,8 @@ cd "${ROOT_DIR}"
 export PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
 
+EPOCHS="${EPOCHS:-50}"
+
 torchrun \
   --standalone \
   --nproc_per_node=6 \
@@ -21,7 +23,7 @@ torchrun \
   --input_size 224 \
   --batch_size 8 \
   --accum_iter 1 \
-  --epochs 50 \
+  --epochs "${EPOCHS}" \
   --lr 1.5e-5 \
   --min_lr 1e-7 \
   --warmup_epochs 5 \

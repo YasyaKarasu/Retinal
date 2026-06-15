@@ -9,6 +9,7 @@ export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
 
 LR="${LR:-5e-6}"
 MIN_LR="${MIN_LR:-5e-8}"
+EPOCHS="${EPOCHS:-50}"
 WARMUP_EPOCHS="${WARMUP_EPOCHS:-5}"
 TASK="${TASK:-retfound_dinov2_meh_rfmid_2xl40_lr5em6}"
 
@@ -33,7 +34,7 @@ torchrun \
   --input_size 224 \
   --batch_size 16 \
   --accum_iter 1 \
-  --epochs 50 \
+  --epochs "${EPOCHS}" \
   --lr "${LR}" \
   --min_lr "${MIN_LR}" \
   --warmup_epochs "${WARMUP_EPOCHS}" \
