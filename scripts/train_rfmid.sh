@@ -8,6 +8,7 @@ export PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}"
 
 EPOCHS="${EPOCHS:-50}"
 TEST_EVAL_INTERVAL="${TEST_EVAL_INTERVAL:-10}"
+POS_WEIGHT_MAX="${POS_WEIGHT_MAX:-20}"
 
 torchrun \
   --standalone \
@@ -33,7 +34,7 @@ torchrun \
   --drop_path 0.2 \
   --threshold 0.5 \
   --use_pos_weight \
-  --pos_weight_max 20 \
+  --pos_weight_max "${POS_WEIGHT_MAX}" \
   --dist_eval \
   --num_workers 8 \
   --task retfound_dinov2_meh_rfmid

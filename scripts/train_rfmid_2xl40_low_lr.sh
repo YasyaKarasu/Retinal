@@ -12,6 +12,7 @@ MIN_LR="${MIN_LR:-5e-8}"
 EPOCHS="${EPOCHS:-50}"
 TEST_EVAL_INTERVAL="${TEST_EVAL_INTERVAL:-10}"
 WARMUP_EPOCHS="${WARMUP_EPOCHS:-5}"
+POS_WEIGHT_MAX="${POS_WEIGHT_MAX:-20}"
 TASK="${TASK:-retfound_dinov2_meh_rfmid_2xl40_lr5em6}"
 
 python -m retfound.prepare_cache \
@@ -45,7 +46,7 @@ torchrun \
   --drop_path 0.2 \
   --threshold 0.5 \
   --use_pos_weight \
-  --pos_weight_max 20 \
+  --pos_weight_max "${POS_WEIGHT_MAX}" \
   --dist_eval \
   --num_workers "${NUM_WORKERS:-8}" \
   --prefetch_factor "${PREFETCH_FACTOR:-4}" \
